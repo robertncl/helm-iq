@@ -1,13 +1,9 @@
 # Default values for nexus-iq-server-ha (AKS/managed-csi)
 
-# Nexus IQ Server HA configuration
-
 # Image settings
-imageRegistry: ""
 image: "sonatype/nexus-iq-server"
 tag: "1.193.0"
 imagePullPolicy: "IfNotPresent"
-imagePullSecret: ""
 
 # Resources (customize as needed)
 resources:
@@ -18,13 +14,10 @@ resources:
     cpu: "4"
     memory: "8Gi"
 
-# Environment variables
-env: []
-
 # JAVA_OPTS for JVM tuning
 javaOpts: ""
 
-# License (set one of these)
+# License (required)
 license: "" # Path to your product license file
 
 # Database (PostgreSQL 10.7+)
@@ -34,43 +27,28 @@ database:
   name: "iq"
   username: "postgres"
   password: "<your-password>"
-  passwordSecret: "" # Name of an existing secret with password key
 
 # Shared file system (AKS managed-csi)
 persistence:
-  existingPersistentVolumeName: ""
-  existingPersistentVolumeClaimName: ""
-  persistentVolumeName: "iq-server-pv"
   persistentVolumeClaimName: "iq-server-pvc"
-  persistentVolumeRetainPolicy: "keep"
-  persistentVolumeClaimRetainPolicy: "keep"
   size: "10Gi"
   storageClassName: "managed-csi"
   accessModes:
     - ReadWriteMany
   csi:
     driver: "file.csi.azure.com"
-    fsType: ""
-    volumeHandle: ""
-  nfs:
-    server: ""
-    path: "/"
 
 # Service account
 serviceAccountName: "default"
 
 # Service exposure
 serviceType: "ClusterIP"
-applicationServiceAnnotations: {}
-adminServiceAnnotations: {}
-podAnnotations: {}
 
 # Number of pods
 replicas: 2
 
 # Initial admin password
 initialAdminPassword: "admin123"
-initialAdminPasswordSecret: ""
 
 # Probes
 startupProbe:
