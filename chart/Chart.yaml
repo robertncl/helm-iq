@@ -1,0 +1,27 @@
+apiVersion: v2
+name: nexus-iq-server-ha
+version: 193.0.0
+appVersion: 1.193.0
+description: A cluster of Sonatype Nexus IQ Servers to continuously monitor your entire software supply chain
+type: application
+keywords:
+  - sonatype
+  - nexus
+  - lifecycle
+  - iq
+  - remediate
+  - vulnerabilities
+  - policy
+home: https://www.sonatype.com/product-nexus-lifecycle
+maintainers:
+  - email: support@sonatype.com
+    name: Sonatype
+dependencies:
+  - name: ingress-nginx
+    version: 4.4.2
+    repository: https://kubernetes.github.io/ingress-nginx
+    condition: ingress-nginx.enabled
+  - name: fluentd
+    repository: https://charts.bitnami.com/bitnami
+    version: 7.0.3
+    condition: fluentd.enabled

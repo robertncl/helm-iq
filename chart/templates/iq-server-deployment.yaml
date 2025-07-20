@@ -1,0 +1,309 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-iq-server-deployment
+spec:
+  replicas: {{ .Values.iq_server.replicas }}
+  selector:
+    matchLabels:
+      name: {{ .Release.Name }}-iq-server
+  template:
+    metadata:
+      labels:
+        name: {{ .Release.Name }}-iq-server
+    {{- with .Values.iq_server.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.iq_server.serviceAccountName }}
+
+      {{- with .Values.iq_server.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- if .Values.iq_server.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.iq_server.imagePullSecret }}
+      {{- end }}
+
+      volumes:
+        - name: {{ .Release.Name }}-iq-server-pod-volume
+          persistentVolumeClaim:
+            claimName: {{- if .Values.iq_server.persistence.existingPersistentVolumeClaimName }} {{ .Values.iq_server.persistence.existingPersistentVolumeClaimName }}{{- else }} {{ .Values.iq_server.persistence.persistentVolumeClaimName }}{{- end }}
+        {{- if or (.Values.secret.arn) (.Values.secret.license.arn) (.Values.secret.rds.arn) (.Values.secret.sshPrivateKey.arn) (.Values.secret.sshKnownHosts.arn) }}
+        - name: {{ .Release.Name }}-iq-server-secrets-volume
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ .Release.Name }}-aws-secret-provider
+              fsType: ext4
+        {{- end }}
+        {{- if or (.Values.iq_server.licenseSecret) (.Values.iq_server.license) }}
+        - name: {{ .Release.Name }}-iq-server-pod-license-volume
+          secret:
+            secretName: {{- if .Values.iq_server.licenseSecret }} {{ .Values.iq_server.licenseSecret }}{{- else}} {{ .Release.Name }}-iq-server-license-secret{{- end}}
+        {{- end }}
+        - name: {{ .Release.Name }}-iq-server-pod-config-volume
+          configMap:
+            name: {{ .Release.Name }}-iq-server-config-configmap
+            items:
+              - key: config
+                path: config.yml
+        {{- if and (.Values.fluentd.enabled) (.Values.fluentd.sidecar_forwarder.enabled) }}
+        - name: {{ .Release.Name }}-iq-server-pod-logs
+          emptyDir: {}
+        - name: {{ .Release.Name }}-fluentd-empty-dir
+          emptyDir: {}
+        - name: {{ .Release.Name }}-fluentd-pod-config-volume
+          configMap:
+            name: {{ .Release.Name }}-fluentd-sidecar-forwarder-configmap
+            items:
+              - key: fluentd
+                path: fluentd.yaml
+        {{- end }}
+      containers:
+        - name: {{ .Release.Name }}-iq-server-container
+          image: {{ include "nexus-iq-server-ha.iqServerImage" . }}
+          imagePullPolicy: {{ .Values.iq_server.imagePullPolicy }}
+          {{- if .Values.iq_server.command }}
+          command:
+          {{- .Values.iq_server.command | toYaml | nindent 12}}
+          {{- end }}
+          {{- if .Values.iq_server.args }}
+          args:
+          {{- .Values.iq_server.args | toYaml | nindent 12}}
+          {{- end }}
+          resources:
+            requests:
+              {{- if .Values.iq_server.resources.requests.cpu }}
+              cpu: {{ .Values.iq_server.resources.requests.cpu }}
+              {{- end }}
+              {{- if .Values.iq_server.resources.requests.memory }}
+              memory: {{ .Values.iq_server.resources.requests.memory }}
+              {{- end }}
+            limits:
+              {{- if .Values.iq_server.resources.limits.cpu }}
+              cpu: {{ .Values.iq_server.resources.limits.cpu }}
+              {{- end }}
+              {{- if .Values.iq_server.resources.limits.memory }}
+              memory: {{ .Values.iq_server.resources.limits.memory }}
+              {{- end }}
+          ports:
+            {{- range $index, $value := (.Values.iq_server.config.server.applicationConnectors) }}
+            - containerPort: {{ $value.port }}
+              name: application-{{- $index }}
+            {{- end }}
+            {{- range $index, $value := (.Values.iq_server.config.server.adminConnectors) }}
+            - containerPort: {{ $value.port }}
+              name: admin-{{- $index }}
+            {{- end }}
+          volumeMounts:
+            - mountPath: {{ .Values.iq_server.config.clusterDirectory }}
+              name: {{ .Release.Name }}-iq-server-pod-volume
+            - mountPath: "/opt/sonatype/nexus-iq-server/.ssh"
+              name: {{ .Release.Name }}-iq-server-pod-volume
+              subPath: .ssh
+            - mountPath: "/etc/nexus-iq-server"
+              name: {{ .Release.Name }}-iq-server-pod-config-volume
+            {{- if or (.Values.secret.arn) (.Values.secret.license.arn) (.Values.secret.rds.arn) (.Values.secret.sshPrivateKey.arn) (.Values.secret.sshKnownHosts.arn) }}
+            - mountPath: "/iq-secrets"
+              name: {{ .Release.Name }}-iq-server-secrets-volume
+              readOnly: true
+            {{- end }}
+            {{- if or (.Values.iq_server.licenseSecret) (.Values.iq_server.license) }}
+            - mountPath: "/license"
+              name: {{ .Release.Name }}-iq-server-pod-license-volume
+              readOnly: true
+            {{- end }}
+            {{- if and (.Values.fluentd.enabled) (.Values.fluentd.sidecar_forwarder.enabled) }}
+            - mountPath: "/var/log/nexus-iq-server"
+              name: {{ .Release.Name }}-iq-server-pod-logs
+            {{- end }}
+          env:
+            {{- if or (.Values.iq_server.licenseSecret) (.Values.iq_server.license) }}
+            - name: NXIQ_LICENSE_FILE
+              value: "/license/license_lic"
+            {{- else if .Values.secret.license.arn }}
+            - name: NXIQ_LICENSE_FILE
+              value: "/iq-secrets/license_lic"
+            {{- end }}
+            {{- if or (.Values.iq_server.sshPrivateKeySecret) (.Values.iq_server.sshPrivateKey) }}
+            - name: NXIQ_SSH_PRIVATE_KEY
+              value: "/opt/sonatype/nexus-iq-server/.ssh/id_rsa"
+            {{- else if .Values.secret.sshPrivateKey.arn }}
+            - name: NXIQ_SSH_PRIVATE_KEY
+              value: "/iq-secrets/id_rsa"
+            {{- end }}
+            {{- if or (.Values.iq_server.sshKnownHostsSecret) (.Values.iq_server.sshKnownHosts) }}
+            - name: NXIQ_SSH_KNOWN_HOSTS
+              value: "/opt/sonatype/nexus-iq-server/.ssh/known_hosts"
+            {{- else if .Values.secret.sshKnownHosts.arn }}
+            - name: NXIQ_SSH_KNOWN_HOSTS
+              value: "/iq-secrets/known_hosts"
+            {{- end }}
+            - name: NXIQ_INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{- if .Values.secret.arn }} "{{ .Release.Name }}-aws-secret"{{- else if .Values.iq_server.initialAdminPasswordSecret }} {{ .Values.iq_server.initialAdminPasswordSecret | quote }}{{- else }} "{{ .Release.Name }}-iq-server-initial-admin-password-secret"{{- end }}
+                  key: "password"
+            - name: NXIQ_DATABASE_HOSTNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{- if .Values.secret.rds.arn }} "{{ .Release.Name }}-aws-rds-secret"{{- else }} "{{ .Release.Name }}-iq-server-database-hostname-secret"{{- end }}
+                  key: "hostname"
+            - name: NXIQ_DATABASE_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: {{- if .Values.secret.rds.arn }} "{{ .Release.Name }}-aws-rds-secret"{{- else }} "{{.Release.Name }}-iq-server-database-port-secret"{{- end }}
+                  key: "port"
+            - name: NXIQ_DATABASE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{- if .Values.secret.rds.arn }} "{{ .Release.Name }}-aws-rds-secret"{{- else }} "{{.Release.Name }}-iq-server-database-name-secret"{{- end }}
+                  key: "name"
+            - name: NXIQ_DATABASE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{- if .Values.secret.rds.arn }} "{{ .Release.Name }}-aws-rds-secret"{{- else }} "{{ .Release.Name }}-iq-server-database-username-secret"{{- end }}
+                  key: "username"
+            - name: NXIQ_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{- if .Values.secret.rds.arn }} "{{ .Release.Name }}-aws-rds-secret"{{- else if .Values.iq_server.database.passwordSecret }} {{ .Values.iq_server.database.passwordSecret | quote }}{{- else }} "{{ .Release.Name }}-iq-server-database-password-secret"{{- end }}
+                  key: "password"
+            - name: NXIQ_DATABASE_MIGRATION
+              value: "false"
+            {{- if .Values.iq_server.javaOpts }}
+            - name: JAVA_OPTS
+              value: {{ .Values.iq_server.javaOpts }}
+            {{- end }}
+            {{- range .Values.iq_server.env }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- if .valueFrom.secretKeyRef }}
+                secretKeyRef:
+                  name: {{ .valueFrom.secretKeyRef.name }}
+                  key: {{ .valueFrom.secretKeyRef.key }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          startupProbe:
+            initialDelaySeconds: {{ .Values.iq_server.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.iq_server.startupProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.iq_server.startupProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.iq_server.startupProbe.failureThreshold }}
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  {{- if .Values.iq_server.config.server.adminConnectors }}
+                    {{- with index .Values.iq_server.config.server.adminConnectors 0 }}
+                      curl -If {{ .type }}://localhost:{{ .port }}/{{- if include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}{{ include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}/{{- end }}ping
+                    {{- end }}
+                  {{- end }}
+          readinessProbe:
+            initialDelaySeconds: {{ .Values.iq_server.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.iq_server.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.iq_server.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.iq_server.readinessProbe.failureThreshold }}
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  {{- if .Values.iq_server.config.server.adminConnectors }}
+                    {{- with index .Values.iq_server.config.server.adminConnectors 0 }}
+                      curl -If {{ .type }}://localhost:{{ .port }}/{{- if include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}{{ include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}/{{- end }}healthcheck/database &&
+                      curl -If {{ .type }}://localhost:{{ .port }}/{{- if include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}{{ include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}/{{- end }}healthcheck/clusterDirectory &&
+                      curl -If {{ .type }}://localhost:{{ .port }}/{{- if include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}{{ include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}/{{- end }}healthcheck/workDirectory
+                    {{- end }}
+                  {{- end }}
+          livenessProbe:
+            initialDelaySeconds: {{ .Values.iq_server.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.iq_server.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.iq_server.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.iq_server.livenessProbe.failureThreshold }}
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  {{- if .Values.iq_server.config.server.adminConnectors }}
+                    {{- with index .Values.iq_server.config.server.adminConnectors 0 }}
+                      curl -If {{ .type }}://localhost:{{ .port }}/{{- if include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}{{ include "nexus-iq-server-ha.trimSpaceAndForwardSlashes" $.Values.iq_server.config.server.adminContextPath }}/{{- end }}healthcheck/threadDeadlock
+                    {{- end }}
+                  {{- end }}
+        {{- if and (.Values.fluentd.enabled) (.Values.fluentd.sidecar_forwarder.enabled) }}
+        - name: {{ .Release.Name }}-fluentd-container
+          image: {{ .Values.fluentd.image.repository }}:{{ .Values.fluentd.image.tag }}
+          imagePullPolicy: {{ .Values.fluentd.image.pullPolicy }}
+          resources:
+            requests:
+              {{- if .Values.fluentd.sidecar_forwarder.resources.requests.cpu }}
+              cpu: {{ .Values.fluentd.sidecar_forwarder.resources.requests.cpu }}
+              {{- end }}
+              {{- if .Values.fluentd.sidecar_forwarder.resources.requests.memory }}
+              memory: {{ .Values.fluentd.sidecar_forwarder.resources.requests.memory }}
+              {{- end }}
+            limits:
+              {{- if .Values.fluentd.sidecar_forwarder.resources.limits.cpu }}
+              cpu: {{ .Values.fluentd.sidecar_forwarder.resources.limits.cpu }}
+              {{- end }}
+              {{- if .Values.fluentd.sidecar_forwarder.resources.limits.memory }}
+              memory: {{ .Values.fluentd.sidecar_forwarder.resources.limits.memory }}
+              {{- end }}
+          volumeMounts:
+            - name: {{ .Release.Name }}-fluentd-pod-config-volume
+              mountPath: "/opt/bitnami/fluentd/conf"
+            - name: {{ .Release.Name }}-iq-server-pod-logs
+              mountPath: "/var/log/nexus-iq-server"
+            - name: {{ .Release.Name }}-fluentd-empty-dir
+              mountPath: /opt/bitnami/fluentd/logs/buffers
+          env:
+            - name: FLUENTD_CONF
+              value: fluentd.yaml
+            {{- if .Values.fluentd.sidecar_forwarder.daemonUser }}
+            - name: FLUENTD_DAEMON_USER
+              value: {{ .Values.fluentd.sidecar_forwarder.daemonUser }}
+            {{- end }}
+            {{- if .Values.fluentd.sidecar_forwarder.daemonGroup }}
+            - name: FLUENTD_DAEMON_GROUP
+              value: {{ .Values.fluentd.sidecar_forwarder.daemonGroup }}
+            {{- end }}
+          {{- with .Values.fluentd.sidecar_forwarder.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      initContainers:
+        - name: {{ .Release.Name }}-set-iq-persistence-ownership
+          image: {{ include "nexus-iq-server-ha.busyboxImage" . }}
+          command:
+            - /bin/sh
+            - -c
+            - {{ .Values.iq_server.pvOwnershipOverride }}
+          volumeMounts:
+            - mountPath: {{ .Values.iq_server.config.clusterDirectory }}
+              name: {{ .Release.Name }}-iq-server-pod-volume
+          resources:
+            requests:
+              {{- if .Values.iq_server.pvOwnershipOverrideResources.requests.cpu }}
+              cpu: {{ .Values.iq_server.pvOwnershipOverrideResources.requests.cpu }}
+              {{- end }}
+              {{- if .Values.iq_server.pvOwnershipOverrideResources.requests.memory }}
+              memory: {{ .Values.iq_server.pvOwnershipOverrideResources.requests.memory }}
+              {{- end }}
+            limits:
+              {{- if .Values.iq_server.pvOwnershipOverrideResources.limits.cpu }}
+              cpu: {{ .Values.iq_server.pvOwnershipOverrideResources.limits.cpu }}
+              {{- end }}
+              {{- if .Values.iq_server.pvOwnershipOverrideResources.limits.memory }}
+              memory: {{ .Values.iq_server.pvOwnershipOverrideResources.limits.memory }}
+              {{- end }}
