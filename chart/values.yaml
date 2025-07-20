@@ -1,0 +1,150 @@
+# Default values for nexus-iq-server-ha (AKS/managed-csi)
+
+# Nexus IQ Server HA configuration
+
+# Image settings
+imageRegistry: ""
+image: "sonatype/nexus-iq-server"
+tag: "1.193.0"
+imagePullPolicy: "IfNotPresent"
+imagePullSecret: ""
+
+# Resources (customize as needed)
+resources:
+  requests:
+    cpu: "2"
+    memory: "4Gi"
+  limits:
+    cpu: "4"
+    memory: "8Gi"
+
+# Environment variables
+env: []
+
+# JAVA_OPTS for JVM tuning
+javaOpts: ""
+
+# License (set one of these)
+license: "" # Path to your product license file
+
+# Database (PostgreSQL 10.7+)
+database:
+  hostname: "<your-postgres-host>"
+  port: 5432
+  name: "iq"
+  username: "postgres"
+  password: "<your-password>"
+  passwordSecret: "" # Name of an existing secret with password key
+
+# Shared file system (AKS managed-csi)
+persistence:
+  existingPersistentVolumeName: ""
+  existingPersistentVolumeClaimName: ""
+  persistentVolumeName: "iq-server-pv"
+  persistentVolumeClaimName: "iq-server-pvc"
+  persistentVolumeRetainPolicy: "keep"
+  persistentVolumeClaimRetainPolicy: "keep"
+  size: "10Gi"
+  storageClassName: "managed-csi"
+  accessModes:
+    - ReadWriteMany
+  csi:
+    driver: "file.csi.azure.com"
+    fsType: ""
+    volumeHandle: ""
+  nfs:
+    server: ""
+    path: "/"
+
+# Service account
+serviceAccountName: "default"
+
+# Service exposure
+serviceType: "ClusterIP"
+applicationServiceAnnotations: {}
+adminServiceAnnotations: {}
+podAnnotations: {}
+
+# Number of pods
+replicas: 2
+
+# Initial admin password
+initialAdminPassword: "admin123"
+initialAdminPasswordSecret: ""
+
+# Probes
+startupProbe:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 180
+readinessProbe:
+  initialDelaySeconds: 45
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 4
+livenessProbe:
+  initialDelaySeconds: 180
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Config file (minimal example)
+config:
+  sonatypeWork: "/sonatype-work/clm-server"
+  clusterDirectory: "/sonatype-work/clm-cluster"
+  database:
+    type: "postgresql"
+    hostname: ${NXIQ_DATABASE_HOSTNAME}
+    port: ${NXIQ_DATABASE_PORT}
+    name: ${NXIQ_DATABASE_NAME}
+    username: ${NXIQ_DATABASE_USERNAME}
+    password: ${NXIQ_DATABASE_PASSWORD}
+  licenseFile: ${NXIQ_LICENSE_FILE}
+  server:
+    applicationContextPath: "/"
+    applicationConnectors:
+      - type: http
+        port: 8070
+    adminContextPath: "/"
+    adminConnectors:
+      - type: http
+        port: 8071
+    requestLog:
+      appenders:
+        - type: console
+        - type: file
+          currentLogFilename: "/var/log/nexus-iq-server/request.log"
+          archivedLogFilenamePattern: "/var/log/nexus-iq-server/request-%d.log.gz"
+          archivedFileCount: 50
+  logging:
+    level: INFO
+    loggers:
+      "com.sonatype.insight.scan": INFO
+      "org.apache.http": INFO
+      "org.eclipse.jetty": INFO
+      "org.postgresql.jdbc.PgConnection": INFO
+      "org.quartz": INFO
+      "org.zeroturnaround.exec": INFO
+      "com.networknt.schema": OFF
+      "com.sonatype.insight.audit":
+        appenders:
+          - type: console
+          - type: file
+            currentLogFilename: "/var/log/nexus-iq-server/audit.log"
+            archivedLogFilenamePattern: "/var/log/nexus-iq-server/audit-%d.log.gz"
+            archivedFileCount: 50
+      "com.sonatype.insight.policy.violation":
+        appenders:
+          - type: console
+          - type: file
+            currentLogFilename: "/var/log/nexus-iq-server/policy-violation.log"
+            archivedLogFilenamePattern: "/var/log/nexus-iq-server/policy-violation-%d.log.gz"
+            archivedFileCount: 50
+    appenders:
+      - type: console
+      - type: file
+        currentLogFilename: "/var/log/nexus-iq-server/clm-server.log"
+        archivedLogFilenamePattern: "/var/log/nexus-iq-server/clm-server-%d.log.gz"
+        archivedFileCount: 50
+  createSampleData: false 
